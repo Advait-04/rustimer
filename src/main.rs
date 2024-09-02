@@ -1,7 +1,10 @@
-//
+// 22
 
-use chrono::{DateTime, Local, TimeDelta, Utc};
-use futures_util::{stream::StreamExt, try_join, TryFutureExt};
+use chrono::{DateTime, Local, TimeDelta};
+use futures_util::{stream::StreamExt, try_join};
+use std::io;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use zbus::Connection;
 use zbus_macros::proxy;
 
@@ -39,15 +42,29 @@ trait Login1Session {
 
 #[derive(Debug)]
 struct Timer {
-    timestamp: DateTime<Utc>,
+    timestamp: DateTime<Local>,
+    start_time: DateTime<Local>,
+    break_duration: TimeDelta,
 }
 
 impl Timer {
-    fn update(&mut self, new_value: DateTime<Utc>) {
+    fn new() -> Timer {
+        let now = Local::now();
+        return Timer {
+            timestamp: now,
+            start_time: now,
+            break_duration: TimeDelta::zero(),
+        };
+    }
+    fn update_timestamp(&mut self, new_value: DateTime<Local>) {
         self.timestamp = new_value;
     }
 
-    fn calculate_diff(&self, current_time: DateTime<Utc>) -> TimeDelta {
+    fn update_break_duration(&mut self, new_value: TimeDelta) {
+        self.break_duration = self.break_duration.checked_add(&new_value).unwrap();
+    }
+
+    fn calculate_diff(&self, current_time: DateTime<Local>) -> TimeDelta {
         current_time.time() - self.timestamp.time()
     }
 }
@@ -62,20 +79,50 @@ async fn main() -> zbus::Result<()> {
     let session_manager_proxy = SessionManagerProxy::new(&session_connection).await?;
     let login_session_proxy = Login1SessionProxy::new(&system_connection).await?;
 
+    //setup streams
     let mut session_manager_stream = session_manager_proxy.receive_status_changed().await?;
     let mut login_state_stream = login_session_proxy.receive_unlock().await?;
 
+    let timer = Arc::new(Mutex::new(Timer::new()));
+    let timer_clone_1 = Arc::clone(&timer);
+    let timer_clone_2 = Arc::clone(&timer);
+
+    // handler for the unlock dbus signal
     let unlock_stream_handle = tokio::spawn(async move {
-        while let Some(signal) = login_state_stream.next().await {
-            println!("Unlocked at: {}", Local::now());
+        while let Some(_) = login_state_stream.next().await {
+            let mut timer = timer_clone_1.lock().await;
+            let current_time = Local::now();
+
+            println!("Break? (y/n)");
+            let mut choice = String::new();
+            io::stdin()
+                .read_line(&mut choice)
+                .expect("Error in reading input");
+
+            match choice.trim() {
+                "y" => {
+                    let break_time = timer.calculate_diff(current_time);
+                    timer.update_break_duration(break_time);
+                    println!("The break lasted {}", break_time);
+                    println!("{}", timer.break_duration)
+                }
+                "n" => println!("You were not on a break"),
+                _ => println!("Choose one or the other"),
+            }
         }
     });
 
+    // handler for the screensaver dbus signal
     let lock_stream_handle = tokio::spawn(async move {
         while let Some(signal) = session_manager_stream.next().await {
             let args: StatusChangedArgs = signal.args().expect("Error parsing the args");
             match args.status {
-                3 => println!("this is the lock part: {}", Local::now()),
+                3 => {
+                    let mut timer = timer_clone_2.lock().await;
+                    let locktime = Local::now();
+                    timer.update_timestamp(locktime);
+                    println!("this is the lock part: {}", timer.timestamp);
+                }
                 _ => {}
             }
         }
