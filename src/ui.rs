@@ -1,185 +1,123 @@
-use std::io;
-mod tui;
-
-use color_eyre::{
-    eyre::{bail, Ok, WrapErr},
-    Result,
-};
-
+use chrono::Local;
+use color_eyre::owo_colors::OwoColorize;
 use ratatui::{
-    buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Alignment, Rect},
-    style::Stylize,
-    symbols::border,
-    text::{Line, Text},
-    widgets::{
-        block::{Position, Title},
-        Block, Paragraph, Widget,
-    },
-    DefaultTerminal, Frame,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    Frame,
 };
 
-#[derive(Debug, Default)]
-pub struct App {
-    counter: u8,
-    exit: bool,
-}
+use crate::app::{App, CurrentScreen};
 
-impl App {
-    pub fn run(&mut self, terminal: &mut tui::Tui) -> Result<()> {
-        while !self.exit {
-            terminal.draw(|frame| self.render_frame(frame))?;
-            self.handle_events().wrap_err("handle events failed")?;
+pub fn ui(frame: &mut Frame, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(3),
+        ])
+        .split(frame.area());
+
+    let title_block = Block::default()
+        .borders(Borders::ALL)
+        .style(Style::default());
+
+    let title = Paragraph::new(Text::styled(
+        ":::Rustimer:::",
+        Style::default().fg(Color::Rgb(234, 157, 52)),
+    ))
+    .alignment(Alignment::Center)
+    .block(title_block);
+
+    frame.render_widget(title, chunks[0]);
+
+    //ui switching
+    match app.current_screen {
+        CurrentScreen::Main => {
+            //main part ui
+            let main_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(1),
+                    Constraint::Length(2),
+                    Constraint::Length(2),
+                    Constraint::Length(2),
+                    Constraint::Min(1),
+                ])
+                .split(chunks[1]);
+
+            let time_elapsed = Paragraph::new(Text::styled(
+                format!("time elapsed: {}", Local::now()),
+                Style::default().fg(Color::Rgb(49, 116, 143)),
+            ))
+            .alignment(Alignment::Center)
+            .block(Block::default());
+
+            let break_time = Paragraph::new(Text::styled(
+                format!("break_time: {}", Local::now()),
+                Style::default().fg(Color::Rgb(49, 116, 143)),
+            ))
+            .alignment(Alignment::Center)
+            .block(Block::default());
+
+            let rem_time = Paragraph::new(Text::styled(
+                format!("rem_time: {}", Local::now()),
+                Style::default().fg(Color::Rgb(49, 116, 143)),
+            ))
+            .alignment(Alignment::Center)
+            .block(Block::default());
+
+            let footer_block = Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default());
+
+            let footer = Paragraph::new(Text::styled(
+                "Quit (q)",
+                Style::default().fg(Color::Rgb(235, 111, 146)),
+            ))
+            .alignment(Alignment::Center)
+            .block(footer_block);
+            frame.render_widget(time_elapsed, main_chunks[1]);
+            frame.render_widget(break_time, main_chunks[2]);
+            frame.render_widget(rem_time, main_chunks[3]);
+            frame.render_widget(footer, chunks[2]);
         }
-        Ok(())
-    }
+        CurrentScreen::Prompt => {
+            let main_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(1),
+                    Constraint::Length(2),
+                    Constraint::Min(1),
+                ])
+                .split(chunks[1]);
 
-    fn render_frame(&self, frame: &mut Frame) {
-        frame.render_widget(self, frame.area())
-    }
+            let break_prompt = Paragraph::new(Text::styled(
+                "Does this count??",
+                Style::default().fg(Color::Rgb(49, 116, 143)),
+            ))
+            .alignment(Alignment::Center)
+            .block(Block::default());
 
-    fn handle_events(&mut self) -> Result<()> {
-        match event::read()? {
-            // it's important to check that the event is a key press event as
-            // crossterm also emits key release and repeat events on Windows.
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => self
-                .handle_key_event(key_event)
-                .wrap_err_with(|| format!("handling key event failed:\n{key_event:#?}")),
-            _ => Ok(()),
+            let info = vec![
+                Span::styled("Yes (y)", Style::default().fg(Color::Rgb(235, 111, 146))),
+                Span::styled(" | ", Style::default().fg(Color::White)),
+                Span::styled("No (n)", Style::default().fg(Color::Rgb(235, 111, 146))),
+                Span::styled(" | ", Style::default().fg(Color::White)),
+                Span::styled("Quit (q)", Style::default().fg(Color::Rgb(235, 111, 146))),
+            ];
+            let footer_block = Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default());
+
+            let footer = Paragraph::new(Line::from(info))
+                .alignment(Alignment::Center)
+                .block(footer_block);
+
+            frame.render_widget(break_prompt, main_chunks[1]);
+            frame.render_widget(footer, chunks[2]);
         }
-    }
-
-    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<()> {
-        match key_event.code {
-            KeyCode::Char('q') => self.exit(),
-            KeyCode::Left => self.decrement_counter()?,
-            KeyCode::Right => self.increment_counter()?,
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn exit(&mut self) {
-        self.exit = true;
-    }
-
-    fn increment_counter(&mut self) -> Result<()> {
-        self.counter += 1;
-        if self.counter > 2 {
-            bail!("counter overflow");
-        }
-        Ok(())
-    }
-
-    fn decrement_counter(&mut self) -> Result<()> {
-        self.counter -= 1;
-        Ok(())
-    }
-}
-
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Title::from(" Counter App Tutorial ".bold());
-        let instructions = Title::from(Line::from(vec![
-            " Decrement ".into(),
-            "<Left>".blue().bold(),
-            " Increment ".into(),
-            "<Right>".blue().bold(),
-            " Quit ".into(),
-            "<Q> ".blue().bold(),
-        ]));
-        let block = Block::bordered()
-            .title(title.alignment(Alignment::Center))
-            .title(
-                instructions
-                    .alignment(Alignment::Center)
-                    .position(Position::Bottom),
-            )
-            .border_set(border::THICK);
-
-        let counter_text = Text::from(vec![Line::from(vec![
-            "Value: ".into(),
-            self.counter.to_string().yellow(),
-        ])]);
-
-        Paragraph::new(counter_text)
-            .centered()
-            .block(block)
-            .render(area, buf);
-    }
-}
-
-fn main() -> Result<()> {
-    color_eyre::install()?;
-    let mut terminal = tui::init()?;
-    let app_result = App::default().run(&mut terminal);
-    if let Err(err) = tui::restore() {
-        eprintln!("failer to restore terminal. {}", err);
-    }
-    app_result
-}
-
-fn run(mut terminal: DefaultTerminal) -> Result<()> {
-    loop {
-        terminal.draw(|frame| {
-            let greeting = Paragraph::new("Hello from thhe mainframe")
-                .white()
-                .on_blue();
-            frame.render_widget(greeting, frame.area())
-        })?;
-
-        if let event::Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
-                return Ok(());
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ratatui::style::Style;
-
-    #[test]
-    fn render() {
-        let app = App::default();
-        let mut buf = Buffer::empty(Rect::new(0, 0, 50, 4));
-
-        app.render(buf.area, &mut buf);
-
-        let mut expected = Buffer::with_lines(vec![
-            "┏━━━━━━━━━━━━━ Counter App Tutorial ━━━━━━━━━━━━━┓",
-            "┃                    Value: 0                    ┃",
-            "┃                                                ┃",
-            "┗━ Decrement <Left> Increment <Right> Quit <Q> ━━┛",
-        ]);
-        let title_style = Style::new().bold();
-        let counter_style = Style::new().yellow();
-        let key_style = Style::new().blue().bold();
-        expected.set_style(Rect::new(14, 0, 22, 1), title_style);
-        expected.set_style(Rect::new(28, 1, 1, 1), counter_style);
-        expected.set_style(Rect::new(13, 3, 6, 1), key_style);
-        expected.set_style(Rect::new(30, 3, 7, 1), key_style);
-        expected.set_style(Rect::new(43, 3, 4, 1), key_style);
-
-        // note ratatui also has an assert_buffer_eq! macro that can be used to
-        // compare buffers and display the differences in a more readable way
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn handle_key_event() {
-        let mut app = App::default();
-        app.handle_key_event(KeyCode::Right.into()).unwrap();
-        assert_eq!(app.counter, 1);
-
-        app.handle_key_event(KeyCode::Left.into()).unwrap();
-        assert_eq!(app.counter, 0);
-
-        let mut app = App::default();
-        app.handle_key_event(KeyCode::Char('q').into()).unwrap();
-        assert!(app.exit);
     }
 }
